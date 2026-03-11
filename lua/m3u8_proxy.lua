@@ -31,7 +31,7 @@ ngx.log(ngx.INFO, "Fetching M3U8: ", url)
 
 -- Create HTTP client
 local httpc = http.new()
-httpc:set_timeout(10000)
+httpc:set_timeout(15000)
 
 -- Build request headers
 local req_headers = {
@@ -68,56 +68,21 @@ end
 local content = res.body
 local base_url = utils.get_base_url(url)
 
--- Check if URL looks like a segment (ts, m4s, aac, mp4, vtt, key, etc.)
-local function is_segment_url(uri)
-    local lower_uri = uri:lower()
-    -- Common segment extensions
-    if lower_uri:match("%.ts") then return true end
-    if lower_uri:match("%.m4s") then return true end
-    if lower_uri:match("%.m4a") then return true end
-    if lower_uri:match("%.m4v") then return true end
-    if lower_uri:match("%.mp4") then return true end
-    if lower_uri:match("%.aac") then return true end
-    if lower_uri:match("%.vtt") then return true end
-    if lower_uri:match("%.webvtt") then return true end
-    if lower_uri:match("%.srt") then return true end
-    if lower_uri:match("%.key") then return true end
-    -- Check for segment patterns in query params
-    if lower_uri:match("segment") then return true end
-    if lower_uri:match("/seg%-") then return true end
-    if lower_uri:match("/chunk") then return true end
-    return false
-end
-
--- Determine proxy type - default to m3u8 unless it looks like a segment
-local function get_proxy_type(uri)
-    -- Explicit m3u8/m3u extension
-    if uri:match("%.m3u8") or uri:match("%.m3u$") or uri:match("%.m3u%?") then
-        return "m3u8-proxy"
-    end
-    -- Looks like a segment
-    if is_segment_url(uri) then
-        return "ts-proxy"
-    end
-    -- Default to m3u8 for unknown URLs (safer for playlists)
-    return "m3u8-proxy"
-end
-
 -- Helper: rewrite URI attribute in a line
 local function rewrite_uri_attr(line, proxy_type)
     local uri = line:match('URI="([^"]+)"')
     if uri then
         local abs_url = utils.resolve_url(base_url, uri)
         local proxied = utils.build_proxy_url(abs_url, headers, proxy_type)
-        -- Escape special chars in replacement
         local escaped_proxied = proxied:gsub("%%", "%%%%")
         return line:gsub('URI="[^"]+"', 'URI="' .. escaped_proxied .. '"')
     end
     return line
 end
 
--- Track if next line is a variant playlist URL (follows #EXT-X-STREAM-INF)
-local next_is_variant = false
+-- Track what the next URL line should be
+-- nil = unknown, "segment" = ts, "playlist" = m3u8
+local next_line_type = nil
 
 -- Process the M3U8 content line by line
 local lines = {}
@@ -125,55 +90,71 @@ for line in content:gmatch("[^\r\n]+") do
     local processed_line = line
 
     if line ~= "" then
-        -- Segment/Playlist URLs (not tags)
+        -- URL line (not a tag)
         if not line:match("^#") then
-            local segment_url = utils.resolve_url(base_url, line)
+            local abs_url = utils.resolve_url(base_url, line)
             local proxy_type
-            if next_is_variant then
-                -- After #EXT-X-STREAM-INF, always a playlist
+
+            if next_line_type == "segment" then
+                proxy_type = "ts-proxy"
+            elseif next_line_type == "playlist" then
                 proxy_type = "m3u8-proxy"
-                next_is_variant = false
             else
-                -- Use detection for segments in media playlists
-                proxy_type = get_proxy_type(line)
+                -- Fallback: guess based on extension
+                if line:match("%.ts") or line:match("%.m4s") or line:match("%.aac") or line:match("%.mp4") or line:match("%.vtt") then
+                    proxy_type = "ts-proxy"
+                else
+                    -- Default to m3u8 for unknown (safer)
+                    proxy_type = "m3u8-proxy"
+                end
             end
-            processed_line = utils.build_proxy_url(segment_url, headers, proxy_type)
 
-        -- Variant stream info (next line is playlist URL)
+            processed_line = utils.build_proxy_url(abs_url, headers, proxy_type)
+            next_line_type = nil
+
+        -- #EXTINF = next line is a segment
+        elseif line:match("^#EXTINF") then
+            next_line_type = "segment"
+
+        -- #EXT-X-STREAM-INF = next line is a variant playlist
         elseif line:match("^#EXT%-X%-STREAM%-INF") then
-            next_is_variant = true
+            next_line_type = "playlist"
 
-        -- Encryption keys
+        -- #EXT-X-KEY = encryption key
         elseif line:match("^#EXT%-X%-KEY") then
             processed_line = rewrite_uri_attr(line, "ts-proxy")
 
-        -- Session keys
+        -- #EXT-X-SESSION-KEY
         elseif line:match("^#EXT%-X%-SESSION%-KEY") then
             processed_line = rewrite_uri_attr(line, "ts-proxy")
 
-        -- Init segments (fMP4)
+        -- #EXT-X-MAP = init segment
         elseif line:match("^#EXT%-X%-MAP") then
             processed_line = rewrite_uri_attr(line, "ts-proxy")
 
-        -- I-Frame playlists (always m3u8)
+        -- #EXT-X-I-FRAME-STREAM-INF = i-frame playlist
         elseif line:match("^#EXT%-X%-I%-FRAME%-STREAM%-INF") then
             processed_line = rewrite_uri_attr(line, "m3u8-proxy")
 
-        -- Alternate renditions (audio/subtitles - always m3u8 playlists)
+        -- #EXT-X-MEDIA = alternate rendition (audio/subs) playlist
         elseif line:match("^#EXT%-X%-MEDIA") then
             processed_line = rewrite_uri_attr(line, "m3u8-proxy")
 
-        -- LL-HLS: Partial segments
+        -- LL-HLS: #EXT-X-PART = partial segment
         elseif line:match("^#EXT%-X%-PART:") then
             processed_line = rewrite_uri_attr(line, "ts-proxy")
 
-        -- LL-HLS: Preload hints
+        -- LL-HLS: #EXT-X-PRELOAD-HINT
         elseif line:match("^#EXT%-X%-PRELOAD%-HINT") then
             processed_line = rewrite_uri_attr(line, "ts-proxy")
 
-        -- LL-HLS: Rendition reports (m3u8)
+        -- LL-HLS: #EXT-X-RENDITION-REPORT
         elseif line:match("^#EXT%-X%-RENDITION%-REPORT") then
             processed_line = rewrite_uri_attr(line, "m3u8-proxy")
+
+        -- #EXT-X-BYTERANGE = next line is segment (byte range)
+        elseif line:match("^#EXT%-X%-BYTERANGE") then
+            next_line_type = "segment"
         end
     end
 

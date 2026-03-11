@@ -73,7 +73,11 @@ end
 
 -- Build proxy URL for segments
 function _M.build_proxy_url(original_url, headers, proxy_type)
-    local proxy_host = os.getenv("PROXY_HOST") or "http://localhost"
+    -- Auto-detect from request (no config needed)
+    local scheme = ngx.var.scheme or "http"
+    local host = ngx.var.http_host or ngx.var.host or "localhost"
+    local proxy_host = scheme .. "://" .. host
+
     local encoded_url = _M.url_encode(original_url)
     local encoded_headers = _M.url_encode(cjson.encode(headers))
 
