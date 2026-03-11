@@ -73,8 +73,8 @@ end
 
 -- Build proxy URL for segments
 function _M.build_proxy_url(original_url, headers, proxy_type)
-    -- Auto-detect from request (no config needed)
-    local scheme = ngx.var.scheme or "http"
+    -- Auto-detect from request (check X-Forwarded-Proto for Cloudflare/proxies)
+    local scheme = ngx.var.http_x_forwarded_proto or ngx.var.scheme or "http"
     local host = ngx.var.http_host or ngx.var.host or "localhost"
     local proxy_host = scheme .. "://" .. host
 
