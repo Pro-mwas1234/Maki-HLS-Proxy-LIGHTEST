@@ -1,14 +1,8 @@
 local _M = {}
 
-local ffi = require "ffi"
-local C = ffi.C
-
-ffi.cdef[[
-    int mkdir(const char *pathname, int mode);
-]]
-
 local CACHE_DIR = "/cache"
-local cache_enabled = true
+local SIZE_CHECK_INTERVAL = 60  -- Check size every 60 seconds
+local last_size_check = 0
 
 -- Simple hash function for cache keys
 local function hash_key(str)
@@ -17,6 +11,20 @@ local function hash_key(str)
         h = ((h * 33) + string.byte(str, i)) % 0xFFFFFFFF
     end
     return string.format("%08x", h)
+end
+
+-- Parse size string (e.g., "5g" -> bytes)
+local function parse_size(size_str)
+    if not size_str or size_str == "0" then return 0 end
+    local num, unit = size_str:match("^(%d+)(%a?)$")
+    if not num then return 10 * 1024 * 1024 * 1024 end -- default 10GB
+
+    num = tonumber(num)
+    unit = unit:lower()
+    if unit == "g" then return num * 1024 * 1024 * 1024
+    elseif unit == "m" then return num * 1024 * 1024
+    elseif unit == "k" then return num * 1024
+    else return num end
 end
 
 -- Get cache expiry in seconds from env
@@ -38,11 +46,17 @@ local function is_enabled()
     return size ~= "0"
 end
 
+-- Get max cache size in bytes
+local function get_max_size()
+    local size = os.getenv("CACHE_SIZE") or "10g"
+    return parse_size(size)
+end
+
 -- Ensure cache directory exists
 local function ensure_dir(path)
     local dir = path:match("(.*/)")
     if dir then
-        os.execute("mkdir -p " .. dir)
+        os.execute("mkdir -p " .. dir .. " 2>/dev/null")
     end
 end
 
@@ -51,6 +65,52 @@ function _M.get_path(url)
     local key = hash_key(url)
     local subdir = key:sub(1, 2)
     return string.format("%s/%s/%s", CACHE_DIR, subdir, key)
+end
+
+-- Get current cache size in bytes
+local function get_cache_size()
+    local handle = io.popen("du -sb " .. CACHE_DIR .. " 2>/dev/null | cut -f1")
+    if not handle then return 0 end
+    local result = handle:read("*a")
+    handle:close()
+    return tonumber(result) or 0
+end
+
+-- Clean expired files and enforce size limit
+local function cleanup_cache()
+    local now = os.time()
+
+    -- Don't check too often
+    if now - last_size_check < SIZE_CHECK_INTERVAL then
+        return
+    end
+    last_size_check = now
+
+    local expiry = get_expiry_seconds()
+    local max_size = get_max_size()
+    local current_size = get_cache_size()
+
+    -- First pass: delete expired files
+    local cmd = string.format(
+        "find %s -type f -mmin +%d -delete 2>/dev/null",
+        CACHE_DIR, math.floor(expiry / 60)
+    )
+    os.execute(cmd)
+
+    -- Second pass: if still over limit, delete oldest files
+    current_size = get_cache_size()
+    if current_size > max_size then
+        -- Delete oldest 20% of files when over limit
+        local delete_cmd = string.format(
+            "find %s -type f -printf '%%T+ %%p\\n' 2>/dev/null | sort | head -n $(find %s -type f 2>/dev/null | wc -l | awk '{print int($1*0.2)+1}') | cut -d' ' -f2- | xargs rm -f 2>/dev/null",
+            CACHE_DIR, CACHE_DIR
+        )
+        os.execute(delete_cmd)
+        ngx.log(ngx.NOTICE, "Cache cleanup: was ", current_size, " bytes, limit ", max_size)
+    end
+
+    -- Clean empty directories
+    os.execute("find " .. CACHE_DIR .. " -type d -empty -delete 2>/dev/null")
 end
 
 -- Check if cached and not expired
@@ -62,7 +122,10 @@ function _M.get(url)
     if not file then return nil end
 
     -- Check expiry
-    local attr = io.popen("stat -c %Y " .. path .. " 2>/dev/null"):read("*a")
+    local handle = io.popen("stat -c %Y " .. path .. " 2>/dev/null")
+    local attr = handle and handle:read("*a") or ""
+    if handle then handle:close() end
+
     local mtime = tonumber(attr)
     if mtime then
         local age = os.time() - mtime
@@ -88,6 +151,18 @@ end
 function _M.set(url, content_type, body)
     if not is_enabled() then return end
     if not body or #body == 0 then return end
+
+    -- Run cleanup check before writing
+    cleanup_cache()
+
+    -- Check if we have space (quick check)
+    local current_size = get_cache_size()
+    local max_size = get_max_size()
+    if current_size + #body > max_size then
+        -- Force cleanup
+        last_size_check = 0
+        cleanup_cache()
+    end
 
     local path = _M.get_path(url)
     ensure_dir(path)
