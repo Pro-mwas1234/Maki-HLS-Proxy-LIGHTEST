@@ -11,6 +11,7 @@ COPY nginx.conf /usr/local/openresty/nginx/conf/nginx.conf
 COPY lua/ /usr/local/openresty/nginx/lua/
 COPY allowed_origins.txt /usr/local/openresty/nginx/allowed_origins.txt
 COPY index.html /usr/local/openresty/nginx/html/index.html
+COPY public/ /usr/local/openresty/nginx/html/public/
 
 # Copy and setup entrypoint
 COPY entrypoint.sh /entrypoint.sh
