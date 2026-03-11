@@ -12,6 +12,10 @@ COPY lua/ /usr/local/openresty/nginx/lua/
 COPY allowed_origins.txt /usr/local/openresty/nginx/allowed_origins.txt
 COPY index.html /usr/local/openresty/nginx/html/index.html
 
+# Copy and setup entrypoint
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
 EXPOSE 80
 
-CMD ["openresty", "-g", "daemon off;"]
+ENTRYPOINT ["/entrypoint.sh"]
