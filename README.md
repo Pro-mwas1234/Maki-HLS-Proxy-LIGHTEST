@@ -83,19 +83,23 @@ fetch(`${proxy}/m3u8-proxy.m3u8?url=${url}&headers=${headers}`);
 
 ## Cache Settings
 
-Edit `.env` to configure caching:
+Uses **nginx native `proxy_cache`** - fast, efficient, zero CPU overhead.
+
+Edit `.env` to configure:
 
 ```env
 # Cache size (set to 0 to disable)
-CACHE_SIZE=10g
+CACHE_SIZE=5g
 
-# Auto-delete cache after this time
-CACHE_EXPIRY=2d
+# Delete cached files not accessed within this time
+CACHE_EXPIRY=12h
 ```
 
-Options: `1g`, `5g`, `10g`, `20g` | `1d`, `12h`, `7d`
+Options: `1g`, `5g`, `10g`, `20g` | `30m`, `1h`, `12h`, `1d`, `7d`
 
-When cache is full, oldest items are automatically removed. Cache persists across restarts.
+- **max_size** - Oldest files auto-deleted when full (LRU)
+- **inactive** - Files not accessed within this time are deleted
+- Cache persists in `./maki-hls-proxy-cache/`
 
 ## Origin Protection
 

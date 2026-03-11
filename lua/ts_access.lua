@@ -1,0 +1,31 @@
+local utils = require "utils"
+local access = require "access"
+
+-- Handle OPTIONS preflight
+if ngx.req.get_method() == "OPTIONS" then
+    access.handle_options()
+    return ngx.exit(204)
+end
+
+-- Check origin
+if not access.check() then
+    access.deny()
+    return ngx.exit(403)
+end
+
+-- Get query parameters
+local args = ngx.req.get_uri_args()
+local url = utils.url_decode(args.url)
+local headers = utils.parse_headers(args.headers)
+
+if not url then
+    ngx.status = 400
+    ngx.say('{"error": "Missing url parameter"}')
+    return ngx.exit(400)
+end
+
+-- Set variables for proxy_pass
+ngx.var.target_url = url
+ngx.var.custom_referer = headers["Referer"] or ""
+ngx.var.custom_origin = headers["Origin"] or ""
+ngx.var.custom_ua = headers["User-Agent"] or "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"

@@ -1,13 +1,13 @@
 FROM openresty/openresty:alpine
 
-# Install dependencies for opm
-RUN apk add --no-cache perl curl
+# Install dependencies
+RUN apk add --no-cache perl curl gettext
 
 # Install lua-resty-http via opm
 RUN opm get ledgetech/lua-resty-http
 
-# Copy nginx configuration
-COPY nginx.conf /usr/local/openresty/nginx/conf/nginx.conf
+# Copy nginx configuration as template (envsubst replaces vars at runtime)
+COPY nginx.conf /usr/local/openresty/nginx/conf/nginx.conf.template
 COPY lua/ /usr/local/openresty/nginx/lua/
 COPY allowed_origins.txt /usr/local/openresty/nginx/allowed_origins.txt
 COPY index.html /usr/local/openresty/nginx/html/index.html
