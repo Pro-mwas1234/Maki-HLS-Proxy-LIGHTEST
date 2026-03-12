@@ -1,4 +1,4 @@
-const PROXY_HOST = 'http://157.250.198.102/';
+const PROXY_HOST = 'http://localhost:80';
 
 // Edit these values
 const url = 'https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8';
