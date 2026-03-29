@@ -36,24 +36,30 @@ httpc:set_timeout(15000)
 -- Extract host from URL
 local target_host = url:match("https?://([^/]+)")
 
--- Build request headers with sensible defaults
+-- Build request headers with sensible defaults (ALL LOWERCASE to avoid duplicates)
 local req_headers = {
-    ["Host"] = target_host,
-    ["User-Agent"] = headers["User-Agent"] or headers["user-agent"] or "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-    ["Accept"] = headers["Accept"] or headers["accept"] or "*/*",
-    ["Accept-Language"] = headers["Accept-Language"] or headers["accept-language"] or "en-US,en;q=0.9",
+    ["host"] = target_host,
+    ["user-agent"] = headers["user-agent"] or "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+    ["accept"] = headers["accept"] or "*/*",
+    ["accept-language"] = headers["accept-language"] or "en-US,en;q=0.9",
     ["sec-fetch-dest"] = "empty",
     ["sec-fetch-mode"] = "cors",
     ["sec-fetch-site"] = "cross-site",
 }
 
--- Merge custom headers (case-insensitive overrides)
+-- Merge custom headers (NORMALIZE TO LOWERCASE to prevent duplicates)
 for k, v in pairs(headers) do
-    -- Skip Host header - lua-resty-http handles it specially
-    if k:lower() ~= "host" then
-        req_headers[k] = v
+    local key_lower = k:lower()
+    -- Skip host header - lua-resty-http handles it specially
+    if key_lower ~= "host" then
+        req_headers[key_lower] = v
     end
 end
+
+-- Debug: Log outgoing headers (uncomment for debugging)
+-- local debug_log = {}
+-- for k, v in pairs(req_headers) do debug_log[k] = v end
+-- ngx.log(ngx.INFO, "Outgoing headers: ", cjson.encode(debug_log))
 
 -- Fetch the M3U8 playlist
 local res, err = httpc:request_uri(url, {
