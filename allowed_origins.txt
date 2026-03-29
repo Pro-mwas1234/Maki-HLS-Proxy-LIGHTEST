@@ -5,6 +5,7 @@
 localhost
 127.0.0.1
 *
+koyeb.app
 google.com
 
 # you can use both format https://google.com or google.com
