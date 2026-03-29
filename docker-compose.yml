@@ -4,7 +4,7 @@ services:
     image: maki-hls-proxy-lightest
     container_name: maki-hls-proxy-lightest
     ports:
-      - "80:80"
+      - "8080:80"
     restart: unless-stopped
     env_file:
       - .env
